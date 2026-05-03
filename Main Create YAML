@@ -1,0 +1,91 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  S3 Bucket that immediately moves all objects to Glacier Deep Archive
+  on upload, using SSE-S3 (AES-256) encryption at no extra cost.
+
+# Parameters
+
+Parameters:
+ 
+  BucketName:
+    Type: String
+    Default: ''
+    Description: >
+
+# Conditions
+
+Conditions:
+  HasBucketName: !Not [!Equals [!Ref BucketName, '']]
+ 
+# Resources
+Resources:
+ 
+  ArchiveBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !If [HasBucketName, !Ref BucketName, !Ref AWS::NoValue]
+ 
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+ 
+      # Block all public access
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+ 
+      # Transition to Glacier Deep Archive on day 0 (immediately on upload)
+      LifecycleConfiguration:
+        Rules:
+          - Id: ImmediateDeepArchive
+            Status: Enabled
+            Transitions:
+              - TransitionInDays: 0
+                StorageClass: DEEP_ARCHIVE
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+ 
+      Tags:
+        - Key: StackName
+          Value: !Ref AWS::StackName
+        - Key: StorageClass
+          Value: GlacierDeepArchive
+        - Key: ManagedBy
+          Value: CloudFormation
+ 
+  # Enforce HTTPS only
+  ArchiveBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ArchiveBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyNonHttpsRequests
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource:
+              - !GetAtt ArchiveBucket.Arn
+              - !Sub '${ArchiveBucket.Arn}/*'
+            Condition:
+              Bool:
+                'aws:SecureTransport': false
+ 
+# Outputs
+Outputs:
+ 
+  BucketName:
+    Description: Name of the Glacier Deep Archive S3 bucket
+    Value: !Ref ArchiveBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-BucketName'
+ 
+  BucketArn:
+    Description: ARN of the Glacier Deep Archive S3 bucket
+    Value: !GetAtt ArchiveBucket.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-BucketArn'
